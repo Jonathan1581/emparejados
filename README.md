@@ -64,5 +64,5 @@ Pantallas principales del diseño:
 
 ## Enlace al proyecto en GitHub
 
-(Coloca aquí el enlace al repositorio cuando esté creado)
+https://github.com/Jonathan1581/emparejados/blob/main/README.md
 

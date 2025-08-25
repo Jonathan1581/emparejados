@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "717476747532",
+    "project_id": "emparejados-eb4ea",
+    "storage_bucket": "emparejados-eb4ea.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:717476747532:android:5d9b80546ff41d3d199129",
+        "android_client_info": {
+          "package_name": "com.example.emparejados"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "717476747532-1je27namf8u7lvhmkh1ujkmav4l06bsv.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBhfG60BzXpMUiYgulKjZCFG1rX5yCU784"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "717476747532-1je27namf8u7lvhmkh1ujkmav4l06bsv.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

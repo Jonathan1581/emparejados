@@ -1,5 +1,7 @@
+import 'package:emparejados/models/interaccion_usuario.model.dart';
 import 'package:emparejados/models/match.model.dart';
 import 'package:emparejados/models/usuario.model.dart';
+import 'package:emparejados/repositories/interacciones.repository.dart';
 import 'package:emparejados/repositories/matches.repository.dart';
 import 'package:emparejados/repositories/usuarios.repository.dart';
 import 'package:emparejados/utils/logger.dart';
@@ -13,11 +15,17 @@ final matchesRepositoryProvider = Provider<MatchesRepository>((ref) {
   return MatchesRepository();
 });
 
+final interaccionesRepositoryProvider =
+    Provider<InteraccionesRepository>((ref) {
+  return InteraccionesRepository();
+});
+
 final emparejamientoProvider =
     StateNotifierProvider<EmparejamientoNotifier, EmparejamientoState>((ref) {
   return EmparejamientoNotifier(
     ref.read(usuariosRepositoryProvider),
     ref.read(matchesRepositoryProvider),
+    ref.read(interaccionesRepositoryProvider),
   );
 });
 
@@ -28,6 +36,7 @@ class EmparejamientoState {
   final bool isLoading;
   final String? error;
   final Usuario? usuarioActual;
+  final List<InteraccionUsuario> interacciones;
 
   EmparejamientoState({
     this.usuariosDisponibles = const [],
@@ -36,6 +45,7 @@ class EmparejamientoState {
     this.isLoading = false,
     this.error,
     this.usuarioActual,
+    this.interacciones = const [],
   });
 
   EmparejamientoState copyWith({
@@ -45,6 +55,7 @@ class EmparejamientoState {
     bool? isLoading,
     String? error,
     Usuario? usuarioActual,
+    List<InteraccionUsuario>? interacciones,
   }) {
     return EmparejamientoState(
       usuariosDisponibles: usuariosDisponibles ?? this.usuariosDisponibles,
@@ -53,6 +64,7 @@ class EmparejamientoState {
       isLoading: isLoading ?? this.isLoading,
       error: error ?? this.error,
       usuarioActual: usuarioActual ?? this.usuarioActual,
+      interacciones: interacciones ?? this.interacciones,
     );
   }
 }
@@ -60,9 +72,13 @@ class EmparejamientoState {
 class EmparejamientoNotifier extends StateNotifier<EmparejamientoState> {
   final UsuariosRepository _usuariosRepository;
   final MatchesRepository _matchesRepository;
+  final InteraccionesRepository _interaccionesRepository;
 
-  EmparejamientoNotifier(this._usuariosRepository, this._matchesRepository)
-      : super(EmparejamientoState());
+  EmparejamientoNotifier(
+    this._usuariosRepository,
+    this._matchesRepository,
+    this._interaccionesRepository,
+  ) : super(EmparejamientoState());
 
   Future<void> establecerUsuarioActual(Usuario usuario) async {
     logInfo('=== EMPAREJAMIENTO PROVIDER: Estableciendo usuario actual ===');
@@ -74,10 +90,44 @@ class EmparejamientoNotifier extends StateNotifier<EmparejamientoState> {
     state = state.copyWith(usuarioActual: usuario);
     logInfo('Usuario actual establecido en el estado');
 
+    // Cargar datos en paralelo para mejor performance
+    await Future.wait([
+      _cargarInteracciones(),
+      _cargarMatches(),
+    ]);
+
     await _cargarUsuariosDisponibles();
-    await _cargarMatches();
 
     logInfo('=== FIN ESTABLECER USUARIO ACTUAL ===');
+  }
+
+  Future<void> _cargarInteracciones() async {
+    logInfo('=== CARGANDO INTERACCIONES ===');
+
+    if (state.usuarioActual == null) {
+      return;
+    }
+
+    try {
+      final interaccionesStream = _interaccionesRepository
+          .obtenerInteraccionesUsuario(state.usuarioActual!.id);
+
+      await for (final interacciones in interaccionesStream) {
+        final usuariosVistos = interacciones
+            .map((interaccion) => interaccion.usuarioObjetivoId)
+            .toList();
+
+        state = state.copyWith(
+          interacciones: interacciones,
+          usuariosVistos: usuariosVistos,
+        );
+
+        logInfo('Interacciones cargadas: ${interacciones.length}');
+        logInfo('Usuarios vistos: ${usuariosVistos.length}');
+      }
+    } catch (e) {
+      logError('Error al cargar interacciones', e);
+    }
   }
 
   Future<void> _cargarUsuariosDisponibles() async {
@@ -160,49 +210,130 @@ class EmparejamientoNotifier extends StateNotifier<EmparejamientoState> {
     }
 
     try {
-      await _matchesRepository.darLike(
-        state.usuarioActual!.id,
-        usuarioId,
+      logInfo('=== DANDO LIKE ===');
+      logInfo('Usuario objetivo ID: $usuarioId');
+
+      // Crear interacción en Firestore
+      final interaccion = InteraccionUsuario(
+        id: '',
+        usuarioActualId: state.usuarioActual!.id,
+        usuarioObjetivoId: usuarioId,
+        tipo: TipoInteraccion.like,
+        fechaInteraccion: DateTime.now(),
       );
 
-      // Agregar usuario a la lista de vistos
-      final nuevosUsuariosVistos = [...state.usuariosVistos, usuarioId];
+      await _interaccionesRepository.registrarInteraccion(interaccion);
+      logInfo('Interacción registrada en Firestore');
 
-      // Remover usuario de la lista de disponibles
+      // Actualizar estado local inmediatamente
+      final nuevaInteraccion = interaccion.copyWith(
+          id: 'temp_${DateTime.now().millisecondsSinceEpoch}');
+      final nuevasInteracciones = [...state.interacciones, nuevaInteraccion];
+      final nuevosUsuariosVistos = [...state.usuariosVistos, usuarioId];
       final nuevosUsuariosDisponibles = state.usuariosDisponibles
           .where((usuario) => usuario.id != usuarioId)
           .toList();
 
       state = state.copyWith(
+        interacciones: nuevasInteracciones,
         usuariosVistos: nuevosUsuariosVistos,
         usuariosDisponibles: nuevosUsuariosDisponibles,
       );
 
-      // Recargar matches para ver si hay un nuevo match
-      await _cargarMatches();
+      logInfo('Estado local actualizado');
+      logInfo('=== LIKE COMPLETADO ===');
     } catch (e) {
+      logError('Error al dar like', e);
       state = state.copyWith(error: e.toString());
     }
   }
 
   Future<void> rechazarUsuario(String usuarioId) async {
-    // Agregar usuario a la lista de vistos
-    final nuevosUsuariosVistos = [...state.usuariosVistos, usuarioId];
+    if (state.usuarioActual == null) {
+      return;
+    }
 
-    // Remover usuario de la lista de disponibles
-    final nuevosUsuariosDisponibles = state.usuariosDisponibles
-        .where((usuario) => usuario.id != usuarioId)
-        .toList();
+    try {
+      logInfo('=== RECHAZANDO USUARIO ===');
+      logInfo('Usuario objetivo ID: $usuarioId');
 
-    state = state.copyWith(
-      usuariosVistos: nuevosUsuariosVistos,
-      usuariosDisponibles: nuevosUsuariosDisponibles,
-    );
+      // Crear interacción de dislike en Firestore
+      final interaccion = InteraccionUsuario(
+        id: '',
+        usuarioActualId: state.usuarioActual!.id,
+        usuarioObjetivoId: usuarioId,
+        tipo: TipoInteraccion.dislike,
+        fechaInteraccion: DateTime.now(),
+      );
+
+      await _interaccionesRepository.registrarInteraccion(interaccion);
+      logInfo('Interacción de dislike registrada en Firestore');
+
+      // Actualizar estado local inmediatamente
+      final nuevaInteraccion = interaccion.copyWith(
+          id: 'temp_${DateTime.now().millisecondsSinceEpoch}');
+      final nuevasInteracciones = [...state.interacciones, nuevaInteraccion];
+      final nuevosUsuariosVistos = [...state.usuariosVistos, usuarioId];
+      final nuevosUsuariosDisponibles = state.usuariosDisponibles
+          .where((usuario) => usuario.id != usuarioId)
+          .toList();
+
+      state = state.copyWith(
+        interacciones: nuevasInteracciones,
+        usuariosVistos: nuevosUsuariosVistos,
+        usuariosDisponibles: nuevosUsuariosDisponibles,
+      );
+
+      logInfo('Estado local actualizado');
+      logInfo('=== RECHAZO COMPLETADO ===');
+    } catch (e) {
+      logError('Error al rechazar usuario', e);
+      state = state.copyWith(error: e.toString());
+    }
   }
 
   Future<void> superLike(String usuarioId) async {
-    // Implementar super like (prioridad más alta)
-    await darLike(usuarioId);
+    if (state.usuarioActual == null) {
+      return;
+    }
+
+    try {
+      logInfo('=== DANDO SUPER LIKE ===');
+      logInfo('Usuario objetivo ID: $usuarioId');
+
+      // Crear interacción de super like en Firestore
+      final interaccion = InteraccionUsuario(
+        id: '',
+        usuarioActualId: state.usuarioActual!.id,
+        usuarioObjetivoId: usuarioId,
+        tipo: TipoInteraccion.superLike,
+        fechaInteraccion: DateTime.now(),
+      );
+
+      await _interaccionesRepository.registrarInteraccion(interaccion);
+      logInfo('Interacción de super like registrada en Firestore');
+
+      // Actualizar estado local inmediatamente
+      final nuevaInteraccion = interaccion.copyWith(
+          id: 'temp_${DateTime.now().millisecondsSinceEpoch}');
+      final nuevasInteracciones = [...state.interacciones, nuevaInteraccion];
+      final nuevosUsuariosVistos = [...state.usuariosVistos, usuarioId];
+      final nuevosUsuariosDisponibles = state.usuariosDisponibles
+          .where((usuario) => usuario.id != usuarioId)
+          .toList();
+
+      state = state.copyWith(
+        interacciones: nuevasInteracciones,
+        usuariosVistos: nuevosUsuariosVistos,
+        usuariosDisponibles: nuevosUsuariosDisponibles,
+      );
+
+      logInfo('Estado local actualizado');
+      logInfo('=== SUPER LIKE COMPLETADO ===');
+    } catch (e) {
+      logError('Error al dar super like', e);
+      state = state.copyWith(error: e.toString());
+    }
   }
 
   Future<void> refrescarUsuarios() async {
@@ -211,7 +342,11 @@ class EmparejamientoNotifier extends StateNotifier<EmparejamientoState> {
         'Estado actual: ${state.usuariosDisponibles.length} usuarios disponibles');
     logInfo('Usuario actual: ${state.usuarioActual?.nombre ?? "null"}');
 
-    await _cargarUsuariosDisponibles();
+    // Recargar interacciones y usuarios en paralelo
+    await Future.wait([
+      _cargarInteracciones(),
+      _cargarUsuariosDisponibles(),
+    ]);
 
     logInfo(
         'Usuarios refrescados. Nuevo estado: ${state.usuariosDisponibles.length} usuarios disponibles');
@@ -332,5 +467,30 @@ class EmparejamientoNotifier extends StateNotifier<EmparejamientoState> {
 
   void resetearEstado() {
     state = EmparejamientoState();
+  }
+
+  // Obtener estadísticas de interacciones
+  Future<Map<String, int>> obtenerEstadisticas() async {
+    if (state.usuarioActual == null) {
+      return {
+        'likes': 0,
+        'dislikes': 0,
+        'superLikes': 0,
+        'matches': 0,
+      };
+    }
+
+    try {
+      return await _interaccionesRepository
+          .obtenerEstadisticasInteracciones(state.usuarioActual!.id);
+    } catch (e) {
+      logError('Error al obtener estadísticas', e);
+      return {
+        'likes': 0,
+        'dislikes': 0,
+        'superLikes': 0,
+        'matches': 0,
+      };
+    }
   }
 }

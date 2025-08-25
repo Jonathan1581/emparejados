@@ -1,9 +1,51 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Reglas simplificadas - acceso completo para usuarios autenticados
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+    // Reglas para usuarios
+    match /usuarios/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Reglas para matches
+    match /matches/{matchId} {
+      allow read: if request.auth != null && 
+        (resource.data.usuario1Id == request.auth.uid || 
+         resource.data.usuario2Id == request.auth.uid);
+      allow write: if request.auth != null && 
+        (request.resource.data.usuario1Id == request.auth.uid || 
+         request.resource.data.usuario2Id == request.auth.uid);
+    }
+    
+    // Reglas para interacciones_usuario
+    match /interacciones_usuario/{interaccionId} {
+      // Permitir lectura si el usuario es parte de la interacción
+      allow read: if request.auth != null && 
+        (resource == null || 
+         resource.data.usuarioActualId == request.auth.uid || 
+         resource.data.usuarioObjetivoId == request.auth.uid);
+      
+      // Permitir escritura si el usuario es el que inicia la interacción
+      allow create: if request.auth != null && 
+        request.resource.data.usuarioActualId == request.auth.uid;
+      
+      // Permitir actualización si el usuario es parte de la interacción
+      allow update: if request.auth != null && 
+        (resource.data.usuarioActualId == request.auth.uid || 
+         resource.data.usuarioObjetivoId == request.auth.uid);
+      
+      // Permitir eliminación si el usuario es el que inició la interacción
+      allow delete: if request.auth != null && 
+        resource.data.usuarioActualId == request.auth.uid;
+    }
+    
+    // Reglas para mensajes
+    match /mensajes/{mensajeId} {
+      allow read: if request.auth != null && 
+        (resource.data.remitenteId == request.auth.uid || 
+         resource.data.destinatarioId == request.auth.uid);
+      allow write: if request.auth != null && 
+        request.resource.data.remitenteId == request.auth.uid;
     }
   }
 }
